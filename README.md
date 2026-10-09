@@ -82,14 +82,10 @@ sight) · `FLOW_LITE_CHROME` · `FLOW_LITE_PAUSE_MIN_S` / `_MAX_S` · `FLOW_LITE
 
 ## Develop
 
-```bash
-git clone https://github.com/fikrifirmanf/flow-lite-mcp.git && cd flow-lite-mcp
-npm install
-npm test        # builds, then an offline check: never opens Chrome or spends credits
-```
-
-`npm test` starts five servers at once on a scratch port and checks one owner, shared queue and validation.
-To run your checkout instead of the published package, point the MCP config at `node /path/to/dist/index.js`.
+From a checkout of the source: `npm install`, then `npm test` (builds, then an offline check that starts five
+servers at once on a scratch port and checks one owner, shared queue and validation; it never opens Chrome or
+spends credits). To run a checkout instead of the published package, point the MCP config at
+`node /path/to/dist/index.js`.
 
 ## Risk
 

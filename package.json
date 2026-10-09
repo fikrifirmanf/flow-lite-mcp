@@ -14,14 +14,6 @@
   ],
   "author": "Fikri Firman Fadilah",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/fikrifirmanf/flow-lite-mcp.git"
-  },
-  "homepage": "https://github.com/fikrifirmanf/flow-lite-mcp#readme",
-  "bugs": {
-    "url": "https://github.com/fikrifirmanf/flow-lite-mcp/issues"
-  },
   "type": "module",
   "bin": {
     "flow-lite-mcp": "dist/index.js"
