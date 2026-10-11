@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { HOME_DIR } from "./chrome.js";
 import { shapes, type Core } from "./core.js";
+import { ENV_LIMITS, limitsShape } from "./limits.js";
 
-// Apps like Claude Desktop start several copies of an MCP server at once. Two copies driving one Flow tab with two
+// Some MCP apps start several copies of an MCP server at once. Two copies driving one Flow tab with two
 // queues is how the original flow-mcp paid for a shot twice, so exactly one process owns Flow: whoever binds this
 // port. Everyone else forwards calls to it over localhost, authenticated with a per-run token.
 const PORT = Number(process.env.FLOW_LITE_PORT ?? 8788);
@@ -44,7 +45,9 @@ export async function becomeOwnerOrClient(local: Core): Promise<Core> {
       const method = req.url?.match(/^\/api\/(\w+)$/)?.[1];
       if (req.method !== "POST" || !method || !(method in shapes)) return send(404, { error: "Not found." });
       const args = z.object(shapes[method as keyof typeof shapes]).parse(JSON.parse((await body(req)) || "{}"));
-      send(200, await (local[method as keyof Core] as (a: unknown) => Promise<unknown>)(args));
+      // The calling app's own limits ride along, and the owner applies whichever is tighter.
+      const caller = limitsShape.parse(JSON.parse(String(req.headers["x-flow-lite-limits"] ?? "{}")));
+      send(200, await (local[method as keyof Core] as (a: unknown, caller: unknown) => Promise<unknown>)(args, caller));
     } catch (err) {
       const message = err instanceof z.ZodError ? err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : String((err as Error)?.message ?? err);
       send(400, { error: message });
@@ -91,7 +94,11 @@ function remote(): Core {
   const call = async (method: string, args: unknown = {}) => {
     const res = await fetch(`${BASE}/api/${method}`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-flow-lite-token": readFileSync(TOKEN_FILE, "utf8").trim() },
+      headers: {
+        "content-type": "application/json",
+        "x-flow-lite-token": readFileSync(TOKEN_FILE, "utf8").trim(),
+        "x-flow-lite-limits": JSON.stringify(ENV_LIMITS),
+      },
       body: JSON.stringify(args),
     });
     const data = (await res.json()) as { error?: string };

@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
+import { ONLY_USER, addSpend, overBudget } from "./limits.js";
 import type { Job } from "./queue.js";
 
 // Never guess a selector: map it from the live page first.
@@ -333,6 +334,9 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
   await pause(page, 500);
 }
 
+// Flow's own "failed, you have not been charged": the only failure that gives the credits back to the daily budget.
+class NotCharged extends Error {}
+
 // Waits until `count` tiles that were not there before have finished. A <flow-error-tile> above the known tiles
 // is Flow's own "failed, you have not been charged", so it gets one free press of Flow's Retry before giving up.
 async function waitForNew(page: Page, before: Set<string>, count: number, timeoutMs: number, job: Job): Promise<string[]> {
@@ -366,7 +370,7 @@ async function waitForNew(page: Page, before: Set<string>, count: number, timeou
       }
     }
     if (fresh.length) return fresh;
-    throw new Error("Flow failed this generation (it says you were not charged). Try again later or reword the prompt.");
+    throw new NotCharged("Flow failed this generation (it says you were not charged). Try again later or reword the prompt.");
   }
   throw new Error(`No result after ${Math.round(timeoutMs / 1000)} s. It may still finish in Flow: check flow_assets before generating again.`);
 }
@@ -408,8 +412,11 @@ export async function runGeneration(job: Job): Promise<string[]> {
 
   job.credits = await applySettings(page, job);
   if (job.credits > s.max_credits) {
-    throw new Error(`Flow quotes ${job.credits} credits, above max_credits=${s.max_credits}. Nothing was generated.`);
+    const userLimit = s.max_credits === s.limits.per_scene ? ` That is the user's limit per scene (FLOW_LITE_MAX_CREDITS). ${ONLY_USER}` : "";
+    throw new Error(`Flow quotes ${job.credits} credits, above max_credits=${s.max_credits}. Nothing was generated.${userLimit}`);
   }
+  const budget = overBudget(job.credits, s.limits);
+  if (budget) throw new Error(budget);
 
   await typePrompt(page, s.prompt);
   const start = page.getByRole("button", { name: "Start generation" });
@@ -417,8 +424,13 @@ export async function runGeneration(job: Job): Promise<string[]> {
   await scrollToTop(page);
   const before = new Set((await visibleTiles(page)).map((t) => t.id).filter((id): id is string => Boolean(id)));
   await start.click();
+  // Counted as spent the moment it is submitted: a render that times out here may still be charged.
+  if (job.credits) addSpend(job.credits);
 
-  const fresh = await waitForNew(page, before, s.variants ?? 1, s.type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job);
+  const fresh = await waitForNew(page, before, s.variants ?? 1, s.type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job).catch((err) => {
+    if (err instanceof NotCharged && job.credits) addSpend(-job.credits);
+    throw err;
+  });
 
   mkdirSync(s.output_dir, { recursive: true });
   const files: string[] = [];

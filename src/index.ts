@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { LocalCore, shapes } from "./core.js";
@@ -10,7 +11,8 @@ if (process.argv[2] === "login") await import("./login.js");
 
 const local = new LocalCore();
 const core = await becomeOwnerOrClient(local);
-const server = new McpServer({ name: "flow-lite-mcp", version: "0.1.0" });
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
+const server = new McpServer({ name: "flow-lite-mcp", version });
 
 type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
 const reply = async (work: Promise<unknown>): Promise<Result> => {
@@ -52,7 +54,7 @@ server.registerTool(
   "flow_status",
   {
     description:
-      "Call first. Shows whether the Flow Chrome window is signed in with a project open, the plan and credits left, the job queue, and prompting tips. If it returns a hint, relay it and stop.",
+      "Call first. Shows whether the Flow Chrome window is signed in with a project open, the plan and credits left, the user's spending limits, the job queue, and prompting tips. If it returns a hint, relay it and stop.",
     inputSchema: shapes.status,
   },
   async () =>
@@ -85,7 +87,7 @@ server.registerTool(
   "flow_generate",
   {
     description:
-      "Queue scenes in Google Flow. Images cost 0 credits; videos cost credits (Omni 1.1 Flash 720p: 7/10/12/15 for 4/6/8/10 s; Veo 3.1 Lite 10, Fast 20, Quality 100). Flow's own quote is read first and the scene is skipped if above max_credits (default 25). Ask the user before queueing anything that costs credits. Returns job ids for flow_wait.",
+      "Queue scenes in Google Flow. Images cost 0 credits; videos cost credits (Omni 1.1 Flash 720p: 7/10/12/15 for 4/6/8/10 s; Veo 3.1 Lite 10, Fast 20, Quality 100). Flow's own quote is read first and the scene is skipped if above max_credits (default 25). Ask the user before queueing anything that costs credits. The user may also have set hard limits per scene and per day (flow_status shows them); no argument here can raise those. Returns job ids for flow_wait.",
     inputSchema: shapes.generate,
   },
   async (args) => reply(core.generate(args)),

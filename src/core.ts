@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { downloadAsset, getState, listAssets, listProjects, newProject, openProject, runGeneration } from "./flow.js";
+import { describeLimits, ENV_LIMITS, ONLY_USER, strictest, type Limits } from "./limits.js";
 import { JobQueue, type Job } from "./queue.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_LITE_OUTPUT ?? join(homedir(), "flow-lite-out");
@@ -25,7 +26,7 @@ const scene = z.object({
   duration: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(10)]).optional().describe("Seconds; Omni models only"),
   resolution: z.enum(["360p", "720p"]).optional().describe("Omni models only"),
   variants: z.number().int().min(1).max(4).optional(),
-  max_credits: z.number().int().min(0).optional().describe("Skip the scene if Flow's own quote is higher. Default 25"),
+  max_credits: z.number().int().min(0).optional().describe("Skip the scene if Flow's own quote is higher. Default 25. Cannot exceed the user's own limit (flow_status shows it)"),
 });
 
 // Shapes are shared by the MCP tools and the localhost API, so both validate the same way.
@@ -55,8 +56,9 @@ export const shapes = {
 type Args<K extends keyof typeof shapes> = z.infer<z.ZodObject<(typeof shapes)[K]>>;
 
 export interface Core {
-  status(a?: Args<"status">): Promise<unknown>;
-  generate(a: Args<"generate">): Promise<unknown>;
+  // `caller` is the limits of the app the call came from, when that is not this process (see owner.ts).
+  status(a?: Args<"status">, caller?: Limits): Promise<unknown>;
+  generate(a: Args<"generate">, caller?: Limits): Promise<unknown>;
   wait(a: Args<"wait">): Promise<unknown>;
   cancel(a: Args<"cancel">): Promise<unknown>;
   project(a: Args<"project">): Promise<unknown>;
@@ -91,18 +93,34 @@ export class LocalCore implements Core {
     if (this.queue.busy) throw new Error("A generation is running in Flow right now. Try again when flow_wait says it has finished.");
   }
 
-  async status() {
+  async status(_a?: Args<"status">, caller?: Limits) {
     const flow = await getState(!this.queue.busy).catch((err: Error) => ({ error: err.message }));
-    return { flow, queue: this.queue.list().map(summary), pacing: this.queue.waiting, output_root: OUTPUT_ROOT };
+    return {
+      flow,
+      limits: describeLimits(strictest(ENV_LIMITS, caller)),
+      queue: this.queue.list().map(summary),
+      pacing: this.queue.waiting,
+      output_root: OUTPUT_ROOT,
+    };
   }
 
-  async generate({ project, scenes }: Args<"generate">) {
+  async generate({ project, scenes }: Args<"generate">, caller?: Limits) {
+    const limits = strictest(ENV_LIMITS, caller);
+    const cap = limits.per_scene;
+    // Checked for every scene before any is queued: a refused call must leave nothing behind.
+    const over = scenes.findIndex((s) => cap !== undefined && (s.max_credits ?? 0) > cap);
+    if (over >= 0) {
+      throw new Error(
+        `Scene ${over + 1} asks for max_credits=${scenes[over]!.max_credits}, above the user's limit of ${cap} credits per scene (FLOW_LITE_MAX_CREDITS). Nothing was queued. ${ONLY_USER}`,
+      );
+    }
     const dir = join(OUTPUT_ROOT, project);
     const first = nextNumber(dir, "scene");
     const jobs = scenes.map((s, i) =>
       this.queue.add({
         ...s,
-        max_credits: s.max_credits ?? 25,
+        max_credits: Math.min(s.max_credits ?? 25, cap ?? Infinity),
+        limits,
         output_dir: dir,
         file_stem: `scene-${String(first + i).padStart(2, "0")}`,
       }),

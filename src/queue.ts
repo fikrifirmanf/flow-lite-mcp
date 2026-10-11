@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Limits } from "./limits.js";
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -11,6 +12,8 @@ export interface Scene {
   resolution?: "360p" | "720p";
   variants?: number;
   max_credits: number;
+  // The user's limits in force when this was queued (see limits.ts).
+  limits: Limits;
   output_dir: string;
   file_stem: string;
 }

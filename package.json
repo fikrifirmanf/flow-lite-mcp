@@ -1,6 +1,6 @@
 {
   "name": "flow-lite-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local MCP server that lets Claude drive Google Flow (image and video generation) through its real web page, in its own Chrome profile",
   "keywords": [
     "mcp",
